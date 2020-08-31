@@ -5,6 +5,8 @@
 <img src="/screenshots/sensor1.jpg" Height="300">
 <img src="/screenshots/sensor2.jpg" Height="300">
 
+Full Tutotial on Youtube : https://youtu.be/1pDnYhamIeA
+
 ## Getting Started
 
 This project is a starting point for a Flutter application.
