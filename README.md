@@ -1,6 +1,9 @@
-# temperaturemonitor
+# ESP32-Weather-Station-with-Flutter
 
-A new Flutter project.
+<img src="/screenshots/temapp.gif" Height="400" >
+
+<img src="/screenshots/sensor1.jpg" Height="300">
+<img src="/screenshots/sensor2.jpg" Height="300">
 
 ## Getting Started
 
