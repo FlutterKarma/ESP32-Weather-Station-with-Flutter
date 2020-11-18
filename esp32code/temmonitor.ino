@@ -1,115 +1,129 @@
-#include <ESP8266WiFi.h>
-#include <PubSubClient.h>
-#include <dht.h>
-#define dht_apin D1
+#include <BLEDevice.h>
+#include <BLEServer.h>
+#include <BLEUtils.h>
+#include <BLE2902.h>
+#include <DHT.h>
 
-dht DHT;
+#define DHTPIN 4     
+#define DHTTYPE    DHT11
 
-const char* ssid = "JioFi3_04D045";
-const char* password = "ashish246";
+DHT dht(DHTPIN, DHTTYPE);
+BLEServer* pServer = NULL;
+BLECharacteristic* pCharacteristic = NULL;
+bool deviceConnected = false;
+bool oldDeviceConnected = false;
+uint32_t value = 0;
+float prev_temp;
+float prev_humidity;
 
-const char* mqtt_server = "io.adafruit.com";
-const char* mqtt_user = "anand30";
-const char* mqtt_pass = "2fab2d6f84e44a2b8f5f954fe4d48b6d";
+// See the following for generating UUIDs:
+// https://www.uuidgenerator.net/
 
-WiFiClient espClient;
-PubSubClient client(espClient);
-long lastMsg = 0;
-char msg[50];
-int value = 0;
+#define SERVICE_UUID        "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
+#define CHARACTERISTIC_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a8"
 
-void setup_wifi() {
-  delay(100);
-  // We start by connecting to a WiFi network
-  Serial.println();
-  Serial.print("Connecting to ");
-  Serial.println(ssid);
-  WiFi.begin(ssid, password);
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
-  }
 
-  randomSeed(micros());
+class MyServerCallbacks: public BLEServerCallbacks {
+    void onConnect(BLEServer* pServer) {
+      deviceConnected = true;
+      BLEDevice::startAdvertising();
+    };
 
-  Serial.println("");
-  Serial.println("WiFi connected");
-  Serial.println("IP address: ");
-  Serial.println(WiFi.localIP());
-}
-
-void callback(char* topic, byte* payload, unsigned int length) {
-  Serial.print("Message arrived [");
-  Serial.print(topic);
-  Serial.print("] ");
-  for (int i = 0; i < length; i++) {
-    Serial.print((char)payload[i]);
-  }
-  Serial.println();
-}
-
-void reconnect() {
-  // Loop until we're reconnected
-  while (!client.connected()) {
-    Serial.print("Attempting MQTT connection...");
-    // Create a random client ID
-    String clientId = "ESP8266Client-";
-    clientId += String(random(0xffff), HEX);
-    // Attempt to connect
-    if (client.connect(clientId.c_str(), mqtt_user, mqtt_pass)) {
-      Serial.println("connected");
-      // Once connected, publish an announcement...
-      client.publish("outTopic", "hello world");
-      // ... and resubscribe
-      client.subscribe("inTopic");
-    } else {
-      Serial.print("failed, rc=");
-      Serial.print(client.state());
-      Serial.println(" try again in 5 seconds");
-      // Wait 5 seconds before retrying
-      delay(5000);
+    void onDisconnect(BLEServer* pServer) {
+      deviceConnected = false;
     }
+};
+
+void updateTemp(float temp){
+  if(prev_temp != temp){
+   
+
+    String tempString = "";
+    tempString += (int)temp;
+    tempString += "C";
+    prev_temp = temp;
   }
 }
+
+void updateHumidity(float humidity){
+  if(prev_humidity != humidity){
+    String humidityString = "";
+    humidityString += (int)humidity;
+    humidityString += "%";
+    prev_humidity = humidity;
+  }
+}
+
 
 void setup() {
-  pinMode(BUILTIN_LED, OUTPUT);     // Initialize the BUILTIN_LED pin as an output
-  Serial.begin(9600);
-  setup_wifi();
-  client.setServer(mqtt_server, 13370);
-  client.setCallback(callback);
-  reconnect();
+  Serial.begin(115200);
+ dht.begin();
+  // Create the BLE Device
+  BLEDevice::init("ESP32 Test");
+
+  // Create the BLE Server
+  pServer = BLEDevice::createServer();
+  pServer->setCallbacks(new MyServerCallbacks());
+
+  // Create the BLE Service
+  BLEService *pService = pServer->createService(SERVICE_UUID);
+
+  // Create a BLE Characteristic
+  pCharacteristic = pService->createCharacteristic(
+                      CHARACTERISTIC_UUID,
+                      BLECharacteristic::PROPERTY_READ   |
+                      BLECharacteristic::PROPERTY_WRITE  |
+                      BLECharacteristic::PROPERTY_NOTIFY |
+                      BLECharacteristic::PROPERTY_INDICATE
+                    );
+
+  // https://www.bluetooth.com/specifications/gatt/viewer?attributeXmlFile=org.bluetooth.descriptor.gatt.client_characteristic_configuration.xml
+  // Create a BLE Descriptor
+  pCharacteristic->addDescriptor(new BLE2902());
+
+  // Start the service
+  pService->start();
+
+  // Start advertising
+  BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
+  pAdvertising->addServiceUUID(SERVICE_UUID);
+  pAdvertising->setScanResponse(false);
+  pAdvertising->setMinPreferred(0x0);  // set value to 0x00 to not advertise this parameter
+  BLEDevice::startAdvertising();
+  Serial.println("Waiting a client connection to notify...");
 }
 
 void loop() {
 
-  if (!client.connected()) {
-    reconnect();
-  }
+updateTemp(dht.readTemperature());
+updateHumidity(dht.readHumidity());
 
-  client.loop();
 
-  DHT.read11(dht_apin);
-  int h = DHT.humidity;
-  int t = DHT.temperature;
-
-  delay(1000);
-  String hh = String(h);
-  String msg = String(t);
-
-  Serial.print("Publish message: ");
-  Serial.println(msg);
-
-  int numt = t;
-  char cstr[16];
-  itoa(numt, cstr, 10);
-
-  int numh = h;
-  char cshr[16];
-  itoa(numh, cshr, 10);
-
-  delay(1500);
-  client.publish("temp", cstr);
-  client.publish("humi", cshr);
+    // notify changed value
+    if (deviceConnected) {
+        String str = "";
+      str += prev_temp;
+      str += ",";
+      str += prev_humidity;
+    pCharacteristic->setValue((char*)str.c_str());
+    pCharacteristic->notify();
+    
+  Serial.println(prev_humidity);
+  Serial.println(F("%  Temperature: "));
+  Serial.println(prev_temp);
+ // bluetooth stack will go into congestion, if too many packets are sent, in 6 hours test i was able to go as low as 3ms
+    }
+    // disconnecting Serial.println("start advertising");
+        oldDeviceConnected = deviceConnected;
+    if (!deviceConnected && oldDeviceConnected) {
+        delay(500); // give the bluetooth stack the chance to get things ready
+        pServer->startAdvertising(); // restart advertising
+       
+    }
+    // connecting
+    if (deviceConnected && !oldDeviceConnected) {
+        // do stuff here on connecting
+        oldDeviceConnected = deviceConnected;
+    }
 
 }
